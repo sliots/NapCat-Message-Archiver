@@ -75,7 +75,7 @@ async def listen_to_ws():
         try:
             async with websockets.connect(
                 WS_CONFIG['url'],
-                extra_headers=headers,
+                additional_headers=headers,
                 ping_interval=30,
                 ping_timeout=60
             ) as ws:
