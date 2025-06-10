@@ -38,7 +38,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # === Flask App ===
 app = Flask(__name__)
-socketio = SocketIO(app, async_mode='threading')
+socketio = SocketIO(app, async_mode='eventlet')
 
 # === PostgreSQL Pool ===
 db_pool = SimpleConnectionPool(minconn=1, maxconn=5, **DB_CONFIG)
