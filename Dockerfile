@@ -37,4 +37,4 @@ COPY . .
 USER napcat
 
 # 设置入口
-CMD ["python", "app.py"]
+CMD ["gunicorn", "-k", "eventlet", "-w", "1", "-b", "0.0.0.0:5000", "app:app"]
