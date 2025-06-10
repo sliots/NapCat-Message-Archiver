@@ -1,25 +1,40 @@
-# Dockerfile
-FROM python:3.9-slim as builder
+# === 第一阶段：构建依赖 ===
+FROM python:3.11-alpine AS builder
 
-WORKDIR /app
+# 安装构建依赖
+RUN apk add --no-cache \
+    build-base \
+    cargo \
+    gcc \
+    libffi-dev \
+    musl-dev \
+    postgresql-dev
 
-# Install system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc python3-dev && \
-    rm -rf /var/lib/apt/lists/*
+# 设置工作目录
+WORKDIR /install
 
+# 复制 requirements 并安装到 /install 目录
 COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+RUN pip install --prefix=/install --no-cache-dir -r requirements.txt
 
-FROM python:3.9-slim
+# === 第二阶段：最小运行环境 ===
+FROM python:3.11-alpine
+
+# 安装运行时必要库
+RUN apk add --no-cache \
+    libpq \
+    libffi \
+    && adduser -D napcat
+
+# 设置工作目录
 WORKDIR /app
 
-# Copy installed Python packages
-COPY --from=builder /root/.local /root/.local
-# Make sure scripts in .local are usable
-ENV PATH=/root/.local/bin:$PATH
-
-# Copy application files
+# 复制安装好的包和应用代码
+COPY --from=builder /install /usr/local
 COPY . .
 
+# 使用非 root 用户运行
+USER napcat
+
+# 设置入口
 CMD ["python", "app.py"]

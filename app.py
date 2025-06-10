@@ -1,20 +1,18 @@
 # app.py
-import asyncio
+import os
 import json
+import logging
+import asyncio
+import threading
+from datetime import datetime
+
 import websockets
+import psycopg2
+from psycopg2.pool import SimpleConnectionPool
 from flask import Flask
 from flask_socketio import SocketIO
-import psycopg2
-from psycopg2 import sql
-from datetime import datetime
-import os
-import threading
-import time
 
-app = Flask(__name__)
-socketio = SocketIO(app, async_mode='threading')
-
-# Configuration from environment variables with defaults
+# === Config ===
 DB_CONFIG = {
     'dbname': os.getenv('POSTGRES_DB', 'postgres'),
     'user': os.getenv('POSTGRES_USER', 'postgres'),
@@ -24,106 +22,86 @@ DB_CONFIG = {
 }
 
 WS_CONFIG = {
-    'ws_url': os.getenv('WS_URL', 'ws://172.17.0.1:3001'),
-    'ws_auth_token': os.getenv('WS_AUTH_TOKEN', 'napcat'),
-    'reconnect_delay': int(os.getenv('RECONNECT_DELAY', '5'))
+    'url': os.getenv('WS_URL', 'ws://172.17.0.1:3001'),
+    'auth_token': os.getenv('WS_AUTH_TOKEN', 'napcat'),
+    'reconnect_delay': int(os.getenv('RECONNECT_DELAY', 5))
 }
 
 FLASK_CONFIG = {
     'host': os.getenv('FLASK_HOST', '0.0.0.0'),
-    'port': int(os.getenv('FLASK_PORT', '5000')),
+    'port': int(os.getenv('FLASK_PORT', 5000)),
     'debug': os.getenv('FLASK_DEBUG', 'false').lower() == 'true'
 }
 
-# Insert message to database
-def insert_message_to_db(message_data):
+# === Logger ===
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# === Flask App ===
+app = Flask(__name__)
+socketio = SocketIO(app, async_mode='threading')
+
+# === PostgreSQL Pool ===
+db_pool = SimpleConnectionPool(minconn=1, maxconn=5, **DB_CONFIG)
+
+def insert_message(message_data):
+    conn = None
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        cursor = conn.cursor()
-        
-        post_type = message_data.get('post_type')
-        message_id = message_data.get('message_id', 0)
-        timestamp = datetime.fromtimestamp(message_data.get('time', 0))
-        raw = json.dumps(message_data)
-        
-        insert_query = sql.SQL("""
-        INSERT INTO qq_messages (
-            post_type, message_id, timestamp, raw
-        ) VALUES (%s, %s, %s, %s)
-        ON CONFLICT (post_type, message_id, timestamp) 
-        DO NOTHING
-        """)
-        
-        cursor.execute(insert_query, (
-            post_type,
-            message_id,
-            timestamp,
-            raw
-        ))
-        conn.commit()
-        print("Message stored in database")
+        conn = db_pool.getconn()
+        with conn.cursor() as cur:
+            post_type = message_data.get('post_type')
+            message_id = message_data.get('message_id', 0)
+            timestamp = datetime.fromtimestamp(message_data.get('time', 0))
+            raw = json.dumps(message_data)
+
+            cur.execute("""
+                INSERT INTO qq_messages (post_type, message_id, timestamp, raw)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (post_type, message_id, timestamp) DO NOTHING
+            """, (post_type, message_id, timestamp, raw))
+
+            conn.commit()
+            logging.info("Message stored in database")
     except Exception as e:
-        print(f"Error storing message: {e}")
+        logging.error(f"DB Insert Error: {e}")
     finally:
         if conn:
-            conn.close()
+            db_pool.putconn(conn)
 
-# WebSocket handler
-async def napcat_websocket_handler():
-    headers = {"Authorization": f"Bearer {WS_CONFIG['ws_auth_token']}"}
-    
+# === WebSocket Handler ===
+async def listen_to_ws():
+    headers = {"Authorization": f"Bearer {WS_CONFIG['auth_token']}"}
+
     while True:
         try:
             async with websockets.connect(
-                WS_CONFIG['ws_url'],
-                additional_headers=headers,
+                WS_CONFIG['url'],
+                extra_headers=headers,
                 ping_interval=30,
                 ping_timeout=60
-            ) as websocket:
-                print(f"Connected to NapCatQQ WebSocket at {WS_CONFIG['ws_url']}")
-                
-                while True:
+            ) as ws:
+                logging.info(f"Connected to WebSocket at {WS_CONFIG['url']}")
+                async for message in ws:
                     try:
-                        message = await websocket.recv()
-                        print(f"Received message: {message}")
-                        
-                        try:
-                            message_data = json.loads(message)
-                            insert_message_to_db(message_data)
-                            
-                        except json.JSONDecodeError:
-                            print("Received non-JSON message")
-                            
-                    except websockets.exceptions.ConnectionClosed:
-                        print("Connection closed, reconnecting...")
-                        break
+                        data = json.loads(message)
+                        insert_message(data)
+                    except json.JSONDecodeError:
+                        logging.warning("Non-JSON message received")
                     except Exception as e:
-                        print(f"Error processing message: {e}")
-                        break
-                        
+                        logging.error(f"Processing Error: {e}")
         except Exception as e:
-            print(f"WebSocket connection error: {e}, retrying in {WS_CONFIG['reconnect_delay']}s...")
+            logging.error(f"WebSocket connection error: {e}. Retrying in {WS_CONFIG['reconnect_delay']}s...")
             await asyncio.sleep(WS_CONFIG['reconnect_delay'])
 
-# Flask route
+# === Flask Route ===
 @app.route('/')
 def index():
-    return "NapCatQQ Message Receiver Service is running"
+    return "NapCatQQ Message Receiver is running"
 
-# Start WebSocket client
-def start_websocket_client():
-    asyncio.set_event_loop(asyncio.new_event_loop())
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(napcat_websocket_handler())
+# === WebSocket Thread ===
+def start_ws_thread():
+    asyncio.run(listen_to_ws())
 
-if __name__ == '__main__':    
-    # Start WebSocket client in a thread
-    ws_thread = threading.Thread(target=start_websocket_client)
-    ws_thread.daemon = True
-    ws_thread.start()
-    
-    # Start Flask app
-    socketio.run(app, 
-                host=FLASK_CONFIG['host'], 
-                port=FLASK_CONFIG['port'], 
-                debug=FLASK_CONFIG['debug'])
+# === Main ===
+if __name__ == '__main__':
+    threading.Thread(target=start_ws_thread, daemon=True).start()
+    socketio.run(app, host=FLASK_CONFIG['host'], port=FLASK_CONFIG['port'], debug=FLASK_CONFIG['debug'])
