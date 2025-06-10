@@ -60,7 +60,7 @@ def insert_message(message_data):
             """, (post_type, message_id, timestamp, raw))
 
             conn.commit()
-            logging.info("Message stored in database")
+            logging.info(f"Inserted message: {post_type}, ID: {message_id}, Time: {timestamp}")
     except Exception as e:
         logging.error(f"DB Insert Error: {e}")
     finally:
