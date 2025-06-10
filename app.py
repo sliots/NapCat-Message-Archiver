@@ -52,7 +52,6 @@ def insert_message(message_data):
             message_id = message_data.get('message_id', 0)
             timestamp = datetime.fromtimestamp(message_data.get('time', 0))
             raw = json.dumps(message_data)
-            message_content = (message_data.get('message') or '')[:10]
 
             cur.execute("""
                 INSERT INTO qq_messages (post_type, message_id, timestamp, raw)
@@ -61,7 +60,7 @@ def insert_message(message_data):
             """, (post_type, message_id, timestamp, raw))
 
             conn.commit()
-            logging.info(f"Inserted message: {post_type}, ID: {message_id}, Time: {timestamp}, Content: {message_content}")
+            logging.info(f"Inserted message: {post_type}, ID: {message_id}, Time: {timestamp}")
     except Exception as e:
         logging.error(f"DB Insert Error: {e}")
     finally:
