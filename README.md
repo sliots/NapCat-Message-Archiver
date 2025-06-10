@@ -1,1 +1,1 @@
-Archiver messages to postgres
+Archiver NapCat messages to postgres
